@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.db
+benchmark_sonuc.json
+.vscode/

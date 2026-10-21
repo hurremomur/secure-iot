@@ -89,10 +89,13 @@ soguk-zincir/
 │   ├── alici.py            # alıcı: çöz + doğrula + kaydet (SQLite)
 │   ├── benchmark.py        # teknik karşılaştırması (süre/boyut)
 │   ├── guvenlik_testi.py   # saldırı senaryoları (manipülasyon/replay)
+│   ├── cihaz_taklit.py     # MQTT yayıncı (ESP32 öykünücüsü, donanımsız demo/test)
+│   ├── pano.py             # web panosu (canlı izleme: sıcaklık/durum/olaylar)
 │   └── gereksinimler.txt   # Python bağımlılıkları
 ├── cihaz/                  # ESP32 tarafı (C / Arduino)
 │   ├── 01_aes_olcum/       # cihazda AES ölçümü (sahte veri, sensörsüz test)
-│   └── 02_dht_aes/         # gerçek DHT22 verisi + AES + soğuk zincir uyarısı
+│   ├── 02_dht_aes/         # gerçek DHT22 verisi + AES + soğuk zincir uyarısı (seri)
+│   └── 03_mqtt/            # DHT22 + AES-GCM + WiFi/MQTT yayını (PC ile uçtan uca)
 ├── belgeler/
 │   └── protokol.md         # paket formatı ve güvenlik kuralları
 └── README.md
@@ -121,6 +124,49 @@ python benchmark.py        # teknik karşılaştırması (süre/boyut)
 - `guvenlik_testi.py` AEAD tekniklerinin manipülasyonu reddettiğini gösterir.
 - `benchmark.py` teknikleri karşılaştırır ve `benchmark_sonuc.json` üretir.
 
+Canlı izleme panosu (tarayıcıda):
+
+```bash
+python alici.py     # önce veritabanını doldur (simülasyon veya cihaz verisi)
+python pano.py      # sonra panoyu başlat -> http://localhost:8000
+```
+
+`pano.py`, `alici.py`'nin yazdığı `soguk_zincir.db`'yi okuyup güncel sıcaklığı,
+soğuk zincir durumunu, sıcaklık-zaman grafiğini, son olayları ve (varsa)
+teknik karşılaştırmasını her 2 saniyede bir canlı gösterir. Ek kütüphane gerekmez.
+
+### MQTT ile uçtan uca (WiFi — gerçek IoT akışı)
+
+Cihaz şifreli paketi bir MQTT brokerine yayınlar, alıcı dinler. Donanım yoksa
+`cihaz_taklit.py` ESP32 yerine yayın yapar; tüm zincir donanımsız test edilir.
+
+1. **Broker (Mosquitto) kur ve çalıştır:**
+   - Windows: https://mosquitto.org/download → kur → `net start mosquitto`
+     (ya da kurulum klasöründe `mosquitto -v`).
+   - Linux: `sudo apt install mosquitto` → `mosquitto -v`
+   - macOS: `brew install mosquitto` → `mosquitto`
+   - Broker varsayılan **1883** portunda dinler.
+
+2. **Alıcıyı MQTT modunda başlat** (broker ile aynı PC'de):
+   ```bash
+   python alici.py --mqtt
+   python pano.py                 # ayrı terminalde
+   ```
+
+3. **Cihaz tarafı:**
+   - Gerçek cihaz: `cihaz/03_mqtt` firmware'ini ESP32'ye yükle. İçindeki
+     `WIFI_SSID`, `WIFI_PASS` ve `MQTT_BROKER` (PC'nin IP'si) alanlarını doldur.
+   - Donanımsız demo: `python cihaz_taklit.py`
+     (normal ölçümler + soğuk zincir kırılması + manipülasyon + replay yayınlar).
+
+Akış: `cihaz → MQTT broker → alici.py --mqtt (çöz+doğrula+DB) → pano`.
+Broker farklı makinedeyse: `python alici.py --mqtt --broker <broker-IP>`.
+
+> MQTT TLS'siz (1883) kullanılır; bu bilinçli bir tercihtir: gizlilik ve
+> bütünlük payload'un kendisinde (AEAD) olduğundan koruma uçtan uçadır —
+> broker bile veriyi göremez. Bu, farklı şifreleme tekniklerini karşılaştırmayı
+> da mümkün kılar (TLS her şeyi örtseydi kıyas anlamsız olurdu).
+
 Cihaz bağlıyken alıcıyı seri modda çalıştırmak için (ileride):
 `python alici.py --seri COM3`
 
@@ -146,10 +192,12 @@ başlarındaki açıklamalarda.
 - [x] Alıcı uygulaması (çöz + doğrula + SQLite)
 - [x] Güvenlik testi (manipülasyon + replay)
 - [x] Karşılaştırma (PC referansı)
-- [ ] Cihazda şifreleme + ölçüm (ESP32)
-- [ ] Cihaz ↔ PC bağlantısı (seri/Wi-Fi) + kaydet-sonra-aktar
-- [ ] Saldırı senaryolarının donanımda gösterimi
-- [ ] Karşılaştırma arayüzü (grafik panel)
+- [x] Cihaz ↔ PC bağlantısı — MQTT taşıma katmanı (alici.py --mqtt + 03_mqtt firmware)
+- [x] Uçtan uca zincir testi (cihaz taklidi → broker → alıcı → pano) + canlı saldırı reddi
+- [x] İzleme panosu (canlı grafik + durum + olaylar + teknik karşılaştırması)
+- [ ] Cihazda şifreleme + ölçüm (ESP32 gerçek donanım — yarın)
+- [ ] Cihazda teknik karşılaştırması (donanım AES / yazılım AES / Ascon)
+- [ ] Kaydet-sonra-aktar (yolda biriktir, varışta topluca yayınla)
 - [ ] Bütünleşik test, demo ve rapor
 
 ---

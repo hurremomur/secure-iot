@@ -1,3 +1,7 @@
-cryptography>=42.0
-ascon>=1.3
-pyserial>=3.5
+# Bilgisayar (alıcı) tarafı Python bağımlılıkları
+# Kurulum:  python -m pip install -r gereksinimler.txt
+
+cryptography        # AES-GCM, ChaCha20-Poly1305, AES-CTR
+ascon               # Ascon-128 (NIST hafif kripto); PyPI'de sürüm 0.0.9
+paho-mqtt           # MQTT istemcisi (alici.py --mqtt ve cihaz_taklit.py)
+pyserial            # seri mod (alici.py --seri) için

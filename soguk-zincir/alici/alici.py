@@ -4,13 +4,21 @@ alici.py — Alıcı uygulaması (çöz + doğrula + soğuk zincir + kayıt)
 Cihazdan gelen şifreli paketleri alır, çözer, bütünlüğünü doğrular,
 soğuk zincir durumunu belirler ve SQLite'a kaydeder.
 
-İki çalışma modu:
+Üç çalışma modu:
     - Simülasyon (varsayılan): cihaz yokken test için sahte şifreli paket üretir.
       Hemen çalışır, donanım gerekmez.
           python alici.py
-    - Seri (cihaz bağlıyken): ESP32'den USB/seri üzerinden paket okur.
+    - MQTT (önerilen, WiFi ile canlı): cihaz paketi brokere yayınlar, alıcı dinler.
+          python alici.py --mqtt
+          python alici.py --mqtt --broker 192.168.1.50 --konu soguk-zincir/cihaz-01/veri
+      (paho-mqtt gerekir: python -m pip install paho-mqtt)
+    - Seri (cihaz USB ile bağlıyken): ESP32'den seri üzerinden paket okur.
           python alici.py --seri COM3
       (pyserial gerekir: python -m pip install pyserial)
+
+Taşıma katmanı (MQTT/seri) yalnız bayt taşır; şifreleme bunun ÜSTÜNDE,
+uygulama katmanındadır. Brokere giden payload zaten şifrelidir ([nonce][şifreli
+veri][tag]) — broker bile veriyi göremez (uçtan uca).
 
 Şifreleme tekniği buradan seçilir (cihazla AYNI olmalı):
     SECILEN_TEKNIK = "AES-128-GCM"
@@ -30,6 +38,11 @@ SECILEN_TEKNIK = "AES-128-GCM"
 ANAHTAR = bytes.fromhex("00112233445566778899aabbccddeeff")
 ILISKILI = b"cihaz-01"
 VERITABANI = "soguk_zincir.db"
+
+# MQTT ayarları (cihazla aynı broker/konu olmalı)
+MQTT_BROKER = "localhost"          # broker IP/adı (cihazın bağlandığı PC'nin IP'si)
+MQTT_PORT = 1883                   # TLS yok; şifreleme zaten uygulama katmanında
+MQTT_KONU = "soguk-zincir/cihaz-01/veri"
 
 
 def veritabani_hazirla():
@@ -108,16 +121,81 @@ def simulasyon(db, teknik):
     paket_isle(db, teknik, nonce, bytes(blob), gorulen)
 
 
+def wire_ayikla(teknik, payload):
+    """Hattan gelen ham baytı protokole göre ayır: [nonce][şifreli veri][tag].
+    Döndürür: (nonce, blob) — blob = şifreli veri + tag."""
+    n = teknik.nonce_uzunlugu
+    if len(payload) < n:
+        return None, None
+    return payload[:n], payload[n:]
+
+
+def mqtt_dinle(db, teknik, broker, port, konu):
+    """MQTT brokerine abone ol; gelen her şifreli paketi çöz + doğrula + kaydet."""
+    try:
+        import paho.mqtt.client as mqtt
+    except ImportError:
+        print("paho-mqtt kurulu değil. Kur:  python -m pip install paho-mqtt")
+        return
+
+    gorulen = set()
+
+    def on_connect(client, userdata, flags, reason_code, properties=None):
+        if reason_code == 0:
+            print(f"Brokere bağlandı ({broker}:{port}). Konu: {konu}")
+            client.subscribe(konu)
+            print("Paket bekleniyor... (Ctrl+C ile çık)\n")
+        else:
+            print(f"Bağlantı reddedildi (kod {reason_code}).")
+
+    def on_message(client, userdata, msg):
+        nonce, blob = wire_ayikla(teknik, msg.payload)
+        if nonce is None:
+            print("  [RED] Paket çok kısa (nonce eksik).")
+            return
+        # Çöz + doğrula + soğuk zincir + kaydet (simülasyonla aynı fonksiyon)
+        paket_isle(db, teknik, nonce, blob, gorulen)
+
+    # paho-mqtt v2 geriye-uyumlu; sürüm farkını yut
+    try:
+        istemci = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    except AttributeError:
+        istemci = mqtt.Client()   # eski paho (v1)
+    istemci.on_connect = on_connect
+    istemci.on_message = on_message
+
+    print(f"MQTT mod: {broker}:{port} brokerine bağlanılıyor...")
+    try:
+        istemci.connect(broker, port, keepalive=60)
+    except OSError as e:
+        print(f"Brokere ulaşılamadı: {e}\n"
+              f"Broker çalışıyor mu? (ör. mosquitto) ve '{broker}' doğru mu?")
+        return
+
+    try:
+        istemci.loop_forever()
+    except KeyboardInterrupt:
+        print("\nDinleme durduruldu.")
+        istemci.disconnect()
+
+
 def main():
     teknik = TEKNIK_HARITA[SECILEN_TEKNIK]
     db = veritabani_hazirla()
     print(f"Alıcı başladı. Teknik: {teknik.ad} | DB: {VERITABANI}\n")
 
-    if "--seri" in sys.argv:
+    def arg(bayrak, varsayilan):
+        return sys.argv[sys.argv.index(bayrak) + 1] if bayrak in sys.argv else varsayilan
+
+    if "--mqtt" in sys.argv:
+        broker = arg("--broker", MQTT_BROKER)
+        konu = arg("--konu", MQTT_KONU)
+        mqtt_dinle(db, teknik, broker, MQTT_PORT, konu)
+    elif "--seri" in sys.argv:
         port = sys.argv[sys.argv.index("--seri") + 1]
         print(f"SERİ mod: {port} dinleniyor... (Ctrl+C ile çık)")
         print("(Bu kısım cihaz paket formatı netleşince doldurulacak — iskelet hazır.)")
-        # TODO: pyserial ile porttan nonce+blob oku, paket_isle(...) çağır.
+        # TODO: pyserial ile porttan [nonce][blob] oku, wire_ayikla + paket_isle çağır.
     else:
         simulasyon(db, teknik)
 
