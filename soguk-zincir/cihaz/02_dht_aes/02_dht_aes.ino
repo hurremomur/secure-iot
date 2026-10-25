@@ -45,6 +45,7 @@ const uint8_t ANAHTAR[16] = {
 };
 uint8_t nonce[12] = {0};     // her mesajda artan sayac ile degisecek (replay korumasi)
 uint32_t sayac = 0;
+const uint8_t AAD[8] = { 'c','i','h','a','z','-','0','1' };  // "cihaz-01" (projedeki ILISKILI ile ayni)
 
 void hexYaz(const uint8_t* v, size_t n) {
   for (size_t i = 0; i < n; i++) { if (v[i] < 0x10) Serial.print('0'); Serial.print(v[i], HEX); }
@@ -78,11 +79,13 @@ void loop() {
     return;
   }
 
-  // 2) Veriyi metne paketle (kapak simdilik 0; sensor gelince gercek deger)
+  // 2) Veriyi JSON'a paketle (paket.py ve diğer firmware'lerle AYNI format)
   nonceGuncelle();
-  char veri[64];
-  int veriLen = snprintf(veri, sizeof(veri), "t=%.1f;h=%.1f;k=0;n=%lu",
-                         sicaklik, nem, (unsigned long)sayac);
+  char veri[80];
+  uint32_t ts = (uint32_t)(millis() / 1000);
+  int veriLen = snprintf(veri, sizeof(veri),
+                         "{\"t\":%.1f,\"h\":%.1f,\"k\":0,\"ts\":%lu,\"n\":%lu}",
+                         sicaklik, nem, (unsigned long)ts, (unsigned long)sayac);
 
   // 3) ESP32'de şifrele + süre ölç
   uint8_t sifreli[96];
@@ -93,7 +96,7 @@ void loop() {
   mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, ANAHTAR, 128);
   int ret = mbedtls_gcm_crypt_and_tag(
     &gcm, MBEDTLS_GCM_ENCRYPT, veriLen,
-    nonce, sizeof(nonce), NULL, 0,
+    nonce, sizeof(nonce), AAD, sizeof(AAD),
     (const uint8_t*)veri, sifreli, sizeof(tag), tag);
   mbedtls_gcm_free(&gcm);
   int64_t t1 = esp_timer_get_time();

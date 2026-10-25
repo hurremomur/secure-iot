@@ -48,11 +48,15 @@ def yayinci(broker, port):
     return c
 
 
+# Aktif anahtar: varsayılan sabit ANAHTAR; --ecdh ile oturum anahtarıyla değişir
+AKTIF_ANAHTAR = {"deger": ANAHTAR}
+
+
 def paket_yap(teknik, sic, nem, kapak, sayac, boz_bayt=False):
     """Bir ölçümü şifreleyip hat formatına çevir: [nonce][şifreli veri][tag]."""
     veri = paket_olustur(sic, nem, kapak, sayac)
     nonce = nonce_uret(sayac, teknik.nonce_uzunlugu)
-    blob = bytearray(teknik.sifrele(ANAHTAR, nonce, veri, ILISKILI))
+    blob = bytearray(teknik.sifrele(AKTIF_ANAHTAR["deger"], nonce, veri, ILISKILI))
     if boz_bayt and blob:
         blob[len(blob) // 2] ^= 0x01   # ortadaki baytı değiştir (manipülasyon)
     return bytes(nonce) + bytes(blob)
@@ -69,6 +73,35 @@ def main():
     c = yayinci(broker, port=MQTT_PORT)
     print(f"Cihaz taklidi yayında. Broker: {broker}:{MQTT_PORT} | Konu: {konu}")
     print(f"Teknik: {teknik.ad}\n")
+
+    # --- ECDH anahtar değişimi (opsiyonel) ---
+    if "--ecdh" in sys.argv:
+        from anahtar_degisimi import yeni_cift, oturum_anahtari
+        import threading
+        base = konu.rsplit("/", 1)[0]
+        pub_cihaz = base + "/pub/cihaz"
+        pub_alici = base + "/pub/alici"
+        ozel, acik = yeni_cift()
+        hazir = threading.Event()
+
+        def on_msg(cl, ud, msg):
+            if msg.topic == pub_alici and not hazir.is_set() and len(msg.payload) == 32:
+                AKTIF_ANAHTAR["deger"] = oturum_anahtari(ozel, msg.payload)
+                print(f"ECDH tamam ✓ Oturum anahtarı: {AKTIF_ANAHTAR['deger'].hex()}\n")
+                hazir.set()
+
+        c.on_message = on_msg
+        c.subscribe(pub_alici)
+        print("ANAHTAR DEĞİŞİMİ: X25519 (ECDH). Açık anahtar yayınlanıyor, "
+              "alıcının anahtarı bekleniyor...")
+        for _ in range(30):                       # alıcıdan anahtar gelene kadar dene
+            c.publish(pub_cihaz, acik, retain=True)
+            if hazir.wait(1):
+                break
+        if not hazir.is_set():
+            print("ECDH başarısız: alıcıdan açık anahtar gelmedi.\n"
+                  "(Önce: python alici.py --mqtt --ecdh  çalışıyor mu?)")
+            c.loop_stop(); c.disconnect(); return
 
     sayac = 0
 

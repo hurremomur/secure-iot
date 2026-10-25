@@ -34,15 +34,18 @@
 #include "DHT.h"
 #include "mbedtls/gcm.h"
 #include <time.h>
+#include <Preferences.h>
 
 // ====== AYARLAR (kendine göre doldur) ======
 const char* WIFI_SSID = "WIFI_ADI";
 const char* WIFI_PASS = "WIFI_SIFRESI";
 
-const char* MQTT_BROKER = "192.168.1.50";   // broker'ın (alici.py'nin olduğu PC) IP'si
-const int   MQTT_PORT   = 1883;             // TLS yok; şifreleme uygulama katmanında
-const char* MQTT_KONU   = "soguk-zincir/cihaz-01/veri";
-const char* MQTT_ID     = "cihaz-01";
+// Demo için halka açık broker (kurulum gerektirmez). Yerel Mosquitto için
+// MQTT_BROKER'ı PC'nin IP'si yap (ör. "192.168.1.50").
+const char* MQTT_BROKER = "broker.hivemq.com";   // halka açık test brokeri
+const int   MQTT_PORT   = 1883;             // TLS yok; şifreleme uygulama katmanında (uçtan uca)
+const char* MQTT_KONU   = "soguk-zincir/ho7k2m/veri";   // alici.py ile AYNI olmalı
+const char* MQTT_ID     = "cihaz-ho7k2m";   // brokerde benzersiz istemci adı
 
 // ====== KRİPTO SABİTLERİ (alici.py ile AYNI) ======
 const uint8_t ANAHTAR[16] = {
@@ -60,7 +63,26 @@ DHT dht(DHT_PIN, DHT_TIP);
 WiFiClient wifi;
 PubSubClient mqtt(wifi);
 
+// Sayaç KALICI (NVS) — yeniden başlatmada nonce tekrarını önler (bkz. 05_seri).
+Preferences prefs;
+const uint32_t SAYAC_BLOK = 10000;
 uint32_t sayac = 0;
+uint32_t sayac_tavan = 0;
+
+void sayacYukle() {
+  prefs.begin("sz", false);
+  sayac = prefs.getUInt("sayac", 0);
+  sayac_tavan = sayac + SAYAC_BLOK;
+  prefs.putUInt("sayac", sayac_tavan);
+}
+uint32_t sonrakiSayac() {
+  sayac++;
+  if (sayac >= sayac_tavan) {
+    sayac_tavan = sayac + SAYAC_BLOK;
+    prefs.putUInt("sayac", sayac_tavan);
+  }
+  return sayac;
+}
 
 // Sayaçtan 12 baytlık nonce türet (her mesajda farklı -> replay koruması).
 // Düzeni önemli değil; aynı nonce hat üzerinde gönderildiği için PC onu okur.
@@ -97,6 +119,7 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   dht.begin();
+  sayacYukle();
   wifiBaglan();
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
   Serial.println("\n=== DHT22 + AES-128-GCM + MQTT ===");
@@ -116,7 +139,7 @@ void loop() {
   }
 
   // 2) JSON paket (paket.py ile aynı format)
-  sayac++;
+  sayac = sonrakiSayac();                     // kalıcı, geri sarmayan sayaç
   uint32_t ts = (uint32_t)time(nullptr);     // NTP sonrası epoch saniye
   char veri[80];
   int veriLen = snprintf(veri, sizeof(veri),

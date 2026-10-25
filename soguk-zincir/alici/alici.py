@@ -40,9 +40,11 @@ ILISKILI = b"cihaz-01"
 VERITABANI = "soguk_zincir.db"
 
 # MQTT ayarları (cihazla aynı broker/konu olmalı)
-MQTT_BROKER = "localhost"          # broker IP/adı (cihazın bağlandığı PC'nin IP'si)
-MQTT_PORT = 1883                   # TLS yok; şifreleme zaten uygulama katmanında
-MQTT_KONU = "soguk-zincir/cihaz-01/veri"
+# Demo için halka açık broker (kurulum gerektirmez). Yerel kullanım için
+# MQTT_BROKER = "localhost" yap ve bir Mosquitto broker çalıştır.
+MQTT_BROKER = "broker.hivemq.com"  # halka açık test brokeri
+MQTT_PORT = 1883                   # TLS yok; şifreleme zaten uygulama katmanında (uçtan uca)
+MQTT_KONU = "soguk-zincir/ho7k2m/veri"   # benzersiz konu (başkasının verisine karışmasın)
 
 
 def veritabani_hazirla():
@@ -58,11 +60,12 @@ def veritabani_hazirla():
     return db
 
 
-def paket_isle(db, teknik, nonce, blob, gorulen_sayaclar):
-    """Bir şifreli paketi çöz + doğrula + kaydet. Sonucu ekrana yazar."""
+def paket_isle(db, teknik, nonce, blob, gorulen_sayaclar, anahtar=ANAHTAR):
+    """Bir şifreli paketi çöz + doğrula + kaydet. Sonucu ekrana yazar.
+    anahtar: önceden paylaşılmış ANAHTAR (varsayılan) ya da ECDH ile türetilen oturum anahtarı."""
     # 1) Çöz + bütünlük doğrula
     try:
-        ham = teknik.coz(ANAHTAR, nonce, blob, ILISKILI)
+        ham = teknik.coz(anahtar, nonce, blob, ILISKILI)
     except DogrulamaHatasi:
         print("  [RED] Paket reddedildi: bütünlük doğrulanamadı (sahte/bozuk).")
         db.execute("INSERT INTO olaylar(zaman,tur,aciklama) VALUES(?,?,?)",
@@ -87,11 +90,14 @@ def paket_isle(db, teknik, nonce, blob, gorulen_sayaclar):
     print(f"  {isaret}n={kayit['n']} {kayit['t']}°C %{kayit['h']} kapak={kayit['k']} -> {durum}: {aciklama}")
 
     # 4) Kaydet
+    # Zaman damgası: cihazın gerçek saati olmayabilir (NTP yoksa ts = açılıştan beri
+    # geçen saniye). Bu yüzden kaydın saatini ALICI (PC) damgalar — "paketin alındığı an".
+    simdi = int(time.time())
     db.execute("INSERT INTO olcumler(zaman,sicaklik,nem,kapak,sayac,durum) VALUES(?,?,?,?,?,?)",
-               (kayit["ts"], kayit["t"], kayit["h"], kayit["k"], kayit["n"], durum))
+               (simdi, kayit["t"], kayit["h"], kayit["k"], kayit["n"], durum))
     if durum != "OK":
         db.execute("INSERT INTO olaylar(zaman,tur,aciklama) VALUES(?,?,?)",
-                   (kayit["ts"], durum.lower(), aciklama))
+                   (simdi, durum.lower(), aciklama))
     db.commit()
 
 
@@ -130,8 +136,9 @@ def wire_ayikla(teknik, payload):
     return payload[:n], payload[n:]
 
 
-def mqtt_dinle(db, teknik, broker, port, konu):
-    """MQTT brokerine abone ol; gelen her şifreli paketi çöz + doğrula + kaydet."""
+def mqtt_dinle(db, teknik, broker, port, konu, ecdh=False):
+    """MQTT brokerine abone ol; gelen her şifreli paketi çöz + doğrula + kaydet.
+    ecdh=True ise önce X25519 ile anahtar değişimi yapılır (sabit anahtar kullanılmaz)."""
     try:
         import paho.mqtt.client as mqtt
     except ImportError:
@@ -139,22 +146,48 @@ def mqtt_dinle(db, teknik, broker, port, konu):
         return
 
     gorulen = set()
+    base = konu.rsplit("/", 1)[0]          # "soguk-zincir/ho7k2m"
+    pub_cihaz = base + "/pub/cihaz"        # cihazın açık anahtarı
+    pub_alici = base + "/pub/alici"        # alıcının açık anahtarı
+    durum = {"anahtar": None if ecdh else ANAHTAR, "ozel": None, "acik": None}
+
+    if ecdh:
+        from anahtar_degisimi import yeni_cift, oturum_anahtari
+        durum["ozel"], durum["acik"] = yeni_cift()
 
     def on_connect(client, userdata, flags, reason_code, properties=None):
-        if reason_code == 0:
-            print(f"Brokere bağlandı ({broker}:{port}). Konu: {konu}")
-            client.subscribe(konu)
-            print("Paket bekleniyor... (Ctrl+C ile çık)\n")
-        else:
+        if reason_code != 0:
             print(f"Bağlantı reddedildi (kod {reason_code}).")
+            return
+        print(f"Brokere bağlandı ({broker}:{port}). Konu: {konu}")
+        client.subscribe(konu)
+        if ecdh:
+            client.subscribe(pub_cihaz)
+            # Açık anahtarı retained yayınla (sıra önemsiz olsun diye)
+            client.publish(pub_alici, durum["acik"], retain=True)
+            print("ECDH: açık anahtar yayınlandı, cihazın anahtarı bekleniyor...")
+        else:
+            print("Paket bekleniyor... (Ctrl+C ile çık)\n")
 
     def on_message(client, userdata, msg):
+        if ecdh and msg.topic == pub_cihaz:
+            if len(msg.payload) == 32:
+                # Cihaz açık anahtarını aldık: kendi açık anahtarımızı geri yolla
+                client.publish(pub_alici, durum["acik"], retain=True)
+                if durum["anahtar"] is None:
+                    durum["anahtar"] = oturum_anahtari(durum["ozel"], msg.payload)
+                    print(f"ECDH tamam ✓ Oturum anahtarı türetildi: {durum['anahtar'].hex()}")
+                    print("Paket bekleniyor... (Ctrl+C ile çık)\n")
+            return
+        if msg.topic != konu:
+            return
+        if durum["anahtar"] is None:
+            return  # anahtar henüz hazır değil, erken paketi atla
         nonce, blob = wire_ayikla(teknik, msg.payload)
         if nonce is None:
             print("  [RED] Paket çok kısa (nonce eksik).")
             return
-        # Çöz + doğrula + soğuk zincir + kaydet (simülasyonla aynı fonksiyon)
-        paket_isle(db, teknik, nonce, blob, gorulen)
+        paket_isle(db, teknik, nonce, blob, gorulen, durum["anahtar"])
 
     # paho-mqtt v2 geriye-uyumlu; sürüm farkını yut
     try:
@@ -179,6 +212,48 @@ def mqtt_dinle(db, teknik, broker, port, konu):
         istemci.disconnect()
 
 
+def seri_dinle(db, teknik, port, baud=115200):
+    """Cihazdan USB/seri üzerinden gelen paketleri oku + çöz + kaydet.
+    Cihaz her ölçümü 'PKT:<hex>' satırı olarak gönderir; hex = [nonce][şifreli][tag]."""
+    try:
+        import serial  # pyserial
+    except ImportError:
+        print("pyserial kurulu değil. Kur:  python -m pip install pyserial")
+        return
+    try:
+        ser = serial.Serial(port, baud, timeout=1)
+    except Exception as e:
+        print(f"Seri port açılamadı ({port}): {e}")
+        print("İpucu: Arduino'daki Serial Monitor'ı KAPAT — port aynı anda tek "
+              "programda açılabilir.")
+        return
+
+    print(f"SERİ mod: {port} @ {baud} dinleniyor... (Ctrl+C ile çık)")
+    print("Cihazdan paket bekleniyor (PKT: satırları)...\n")
+    gorulen = set()
+    try:
+        while True:
+            try:
+                satir = ser.readline().decode("ascii", errors="ignore").strip()
+            except Exception:
+                continue
+            if not satir.startswith("PKT:"):
+                continue   # cihazın diğer (debug) satırlarını yok say
+            try:
+                payload = bytes.fromhex(satir[4:])
+            except ValueError:
+                continue
+            nonce, blob = wire_ayikla(teknik, payload)
+            if nonce is None:
+                print("  [RED] Paket çok kısa (nonce eksik).")
+                continue
+            paket_isle(db, teknik, nonce, blob, gorulen)
+    except KeyboardInterrupt:
+        print("\nDinleme durduruldu.")
+    finally:
+        ser.close()
+
+
 def main():
     teknik = TEKNIK_HARITA[SECILEN_TEKNIK]
     db = veritabani_hazirla()
@@ -190,12 +265,13 @@ def main():
     if "--mqtt" in sys.argv:
         broker = arg("--broker", MQTT_BROKER)
         konu = arg("--konu", MQTT_KONU)
-        mqtt_dinle(db, teknik, broker, MQTT_PORT, konu)
+        ecdh = "--ecdh" in sys.argv
+        if ecdh:
+            print("ANAHTAR DEĞİŞİMİ: X25519 (ECDH) — sabit anahtar kullanılmıyor.\n")
+        mqtt_dinle(db, teknik, broker, MQTT_PORT, konu, ecdh=ecdh)
     elif "--seri" in sys.argv:
         port = sys.argv[sys.argv.index("--seri") + 1]
-        print(f"SERİ mod: {port} dinleniyor... (Ctrl+C ile çık)")
-        print("(Bu kısım cihaz paket formatı netleşince doldurulacak — iskelet hazır.)")
-        # TODO: pyserial ile porttan [nonce][blob] oku, wire_ayikla + paket_isle çağır.
+        seri_dinle(db, teknik, port)
     else:
         simulasyon(db, teknik)
 

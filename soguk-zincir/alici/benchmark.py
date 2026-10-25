@@ -65,7 +65,10 @@ def main():
 
     with open("benchmark_sonuc.json", "w", encoding="utf-8") as f:
         json.dump(sonuclar, f, ensure_ascii=False, indent=2)
-    print("\n-> Sonuçlar benchmark_sonuc.json dosyasına kaydedildi.\n")
+    print("\n-> Sonuçlar benchmark_sonuc.json dosyasına kaydedildi.")
+    print("NOT: Bu PC referansıdır (AES-NI nedeniyle yanıltıcı). Asıl ve metodoloji")
+    print("     açısından doğru karşılaştırma ESP32'de (04_kiyas): anahtar bir kez")
+    print("     kurulur, şifreleme amortize edilmiş ölçülür.\n")
 
 
 if __name__ == "__main__":

@@ -5,12 +5,24 @@ Arduino IDE ile derlenip USB üzerinden karta yüklenir.
 
 ## Firmware'ler
 
-| Klasör | Ne yapar | Gereken kütüphane |
-|--------|----------|-------------------|
-| `01_aes_olcum/` | Sahte veriyi AES-128-GCM ile şifreler, süresini ölçer (sensör gerekmez) | yok (mbedTLS dahili) |
-| `02_dht_aes/`   | Gerçek DHT22 verisini okur, şifreler, soğuk zincir uyarısı verir | DHT sensor library (Adafruit) |
+| Klasör | Ne yapar | Taşıma | Gereken kütüphane |
+|--------|----------|--------|-------------------|
+| `01_aes_olcum/` | Sahte veriyi AES-128-GCM ile şifreler, süresini ölçer (sensörsüz) | — | yok (mbedTLS dahili) |
+| `02_dht_aes/`   | Gerçek DHT22 + AES-GCM + soğuk zincir uyarısı | Seri (ekran) | DHT sensor library (Adafruit) |
+| `03_mqtt/`      | DHT22 + AES-GCM, brokere yayın | WiFi/MQTT | DHT + PubSubClient |
+| `04_kiyas/`     | **4 tekniği cihazda kıyaslar** (Düz/AES/ChaCha20/Ascon) | Seri (ekran) | DHT (+ ascon.h, chacha20poly1305.h aynı klasörde) |
+| `05_seri/`      | DHT22 + AES-GCM, PC'ye gönderim | USB/seri | DHT |
+| `06_kaydet_aktar/` | **Portatif prototip**: ağ yokken flash'a biriktir, bağlanınca aktar | Bluetooth | DHT |
 
-Önce `01` yüklenir (kriptoyu izole test), sonra `02` (gerçek sensör).
+Önerilen sıra: `01` (kripto izole) → `02` (sensör) → `04` (kıyas = ana bulgu) →
+`05` (canlı izleme, USB) → `06` (kaydet-sonra-aktar prototip, Bluetooth) → `03` (WiFi, uzaktan).
+
+`06_kaydet_aktar` için: **Tools → Partition Scheme → "Huge APP"**
+(Bluetooth + LittleFS yer kaplar).
+
+Notlar:
+- `04_kiyas/` içindeki `ascon.h` ve `chacha20poly1305.h`, `.ino` ile **aynı klasörde** olmalı.
+- `alici.py --seri COMx` çalışırken Arduino Serial Monitor **kapalı** olmalı (port çakışır).
 
 ## Arduino IDE kurulumu
 

@@ -30,7 +30,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERITABANI = "soguk_zincir.db"      # alici.py ile aynı dosya
-BENCHMARK = "benchmark_sonuc.json"  # benchmark.py üretir (varsa gösterilir)
+BENCHMARK = "benchmark_sonuc.json"  # benchmark.py üretir (PC referansı)
+CIHAZ_KIYAS = "cihaz_kiyas.json"    # 04_kiyas'tan kiyas_oku.py ile alınan CİHAZ ölçümü
 PORT = 8000
 
 # Soğuk zincir güvenli aralığı (paket.py ile aynı olmalı)
@@ -49,7 +50,8 @@ def veriyi_topla():
         "olcumler": [],        # son N ölçüm (grafik için)
         "olaylar": [],         # son olaylar (ihlal/sahte paket)
         "sayilar": {"toplam": 0, "ok": 0, "uyari": 0, "bozuldu": 0, "red": 0},
-        "benchmark": [],       # teknik karşılaştırması (varsa)
+        "benchmark": [],       # PC teknik karşılaştırması (varsa)
+        "cihaz_kiyas": [],     # ESP32 teknik karşılaştırması (varsa)
         "aralik": {"min": SICAKLIK_MIN, "max": SICAKLIK_MAX},
     }
 
@@ -101,10 +103,17 @@ def veriyi_topla():
     finally:
         db.close()
 
-    # Benchmark sonucu (opsiyonel)
+    # Benchmark sonucu (PC referansı, opsiyonel)
     try:
         with open(BENCHMARK, encoding="utf-8") as f:
             veri["benchmark"] = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # Cihaz kıyası (ESP32'de ölçülen, opsiyonel)
+    try:
+        with open(CIHAZ_KIYAS, encoding="utf-8") as f:
+            veri["cihaz_kiyas"] = json.load(f)
     except (OSError, json.JSONDecodeError):
         pass
 
@@ -190,6 +199,16 @@ SAYFA = r"""<!doctype html>
   .aead-e{color:var(--ok)}  .aead-h{color:var(--bozuk)}
   .uyari-kutu{background:rgba(245,180,69,.1);border:1px solid rgba(245,180,69,.3);
     color:var(--uyari);border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:14px}
+  /* yatay çubuk kıyas */
+  .cubuk-sat{display:grid;grid-template-columns:150px 1fr 70px;align-items:center;
+    gap:10px;margin:9px 0;font-size:13px}
+  .cubuk-ad{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cubuk-ad small{color:var(--soluk);font-size:10px;margin-left:5px}
+  .cubuk-iz{background:var(--panel2);border-radius:6px;height:16px;overflow:hidden}
+  .cubuk-dol{height:100%;border-radius:6px;background:var(--mavi);
+    transition:width .4s ease}
+  .cubuk-val{text-align:right;font-variant-numeric:tabular-nums;color:var(--metin)}
+  .kiyas-not{color:var(--soluk);font-size:11px;margin-top:12px}
 </style>
 </head>
 <body>
@@ -241,9 +260,9 @@ SAYFA = r"""<!doctype html>
       <ul id="olaylar"><li class="bos">Henüz olay yok.</li></ul>
     </div>
     <div class="kart">
-      <p class="baslik">Şifreleme Tekniği Karşılaştırması</p>
-      <div id="benchmark"><div class="bos">benchmark.py çalıştırılmadı.<br>
-        <span style="font-size:12px">(python benchmark.py)</span></div></div>
+      <p class="baslik">ESP32 — Teknik Kıyası (şifreleme süresi)</p>
+      <div id="kiyas"><div class="bos">Cihaz kıyası yok.<br>
+        <span style="font-size:12px">04_kiyas yükle → python kiyas_oku.py COM5</span></div></div>
     </div>
   </div>
 </div>
@@ -326,25 +345,32 @@ async function yenile(){
     }).join("");
   }
 
-  // Benchmark tablosu (benchmark.py'nin ürettiği alanlar)
-  const b = document.getElementById("benchmark");
-  if(v.benchmark && v.benchmark.length){
-    const u = '<span style="text-transform:none">(µs)</span>';
-    let t = '<table><tr><th>Teknik</th><th>AEAD</th><th>Şifre '+u+'</th>'
-          + '<th>Çöz '+u+'</th><th>Boyut</th><th>Ek yük</th></tr>';
-    for(const r of v.benchmark){
-      const aead = r.dogrulamali ? '<span class="aead-e">evet</span>'
-                                 : '<span class="aead-h">hayır</span>';
-      const n = (x)=> (typeof x === "number") ? x.toFixed(2) : "–";
-      t += `<tr><td>${r.ad}</td><td>${aead}</td>`
-         + `<td>${n(r.sifre_us)}</td><td>${n(r.coz_us)}</td>`
-         + `<td>${r.boyut ?? "–"}</td><td>${r.ek_yuk ?? "–"} B</td></tr>`;
+  // ESP32 teknik kıyası — yatay çubuk grafik (şifreleme süresi)
+  const k = document.getElementById("kiyas");
+  if(v.cihaz_kiyas && v.cihaz_kiyas.length){
+    const maxS = Math.max(...v.cihaz_kiyas.map(r => r.sure_us || 0), 0.01);
+    let en_hizli = null;
+    for(const r of v.cihaz_kiyas)
+      if(r.aead && (en_hizli === null || r.sure_us < en_hizli.sure_us)) en_hizli = r;
+    let h = "";
+    for(const r of v.cihaz_kiyas){
+      const yuzde = Math.max(2, (r.sure_us / maxS) * 100);
+      const renk = !r.aead ? "var(--soluk)"
+                 : (en_hizli && r.ad === en_hizli.ad) ? "var(--ok)" : "var(--mavi)";
+      const etiket = r.aead ? "" : '<small>AEAD değil</small>';
+      h += `<div class="cubuk-sat">`
+         + `<div class="cubuk-ad">${r.ad}${etiket}</div>`
+         + `<div class="cubuk-iz"><div class="cubuk-dol" style="width:${yuzde}%;background:${renk}"></div></div>`
+         + `<div class="cubuk-val">${(r.sure_us ?? 0).toFixed(1)} µs</div></div>`;
     }
-    t += '</table>';
-    t += '<div class="d" style="color:var(--soluk);font-size:11px;margin-top:10px">'
-       + 'PC referans ölçümü (AES-NI nedeniyle AES avantajlı görünür). '
-       + 'Asıl karşılaştırma ESP32 üzerinde yapılacak.</div>';
-    b.innerHTML = t;
+    const aeadBoyut = v.cihaz_kiyas.find(x=>x.aead)?.boyut ?? "";
+    const not = en_hizli
+      ? `En hızlı AEAD: <b style="color:var(--ok)">${en_hizli.ad}</b>. `
+        + `AEAD tekniklerinde boyut eşit (${aeadBoyut} bayt = veri + 16 bayt tag). `
+        + `Süre: anahtar bir kez kurulduktan sonra bir mesajı şifreleme (ESP32).`
+      : "";
+    h += `<div class="kiyas-not">${not}</div>`;
+    k.innerHTML = h;
   }
 
   // Grafik
