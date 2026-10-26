@@ -10,12 +10,15 @@ Arduino IDE ile derlenip USB üzerinden karta yüklenir.
 | `01_aes_olcum/` | Sahte veriyi AES-128-GCM ile şifreler, süresini ölçer (sensörsüz) | — | yok (mbedTLS dahili) |
 | `02_dht_aes/`   | Gerçek DHT22 + AES-GCM + soğuk zincir uyarısı | Seri (ekran) | DHT sensor library (Adafruit) |
 | `03_mqtt/`      | DHT22 + AES-GCM, brokere yayın | WiFi/MQTT | DHT + PubSubClient |
-| `04_kiyas/`     | **4 tekniği cihazda kıyaslar** (Düz/AES/ChaCha20/Ascon) | Seri (ekran) | DHT (+ ascon.h, chacha20poly1305.h aynı klasörde) |
-| `05_seri/`      | DHT22 + AES-GCM, PC'ye gönderim | USB/seri | DHT |
+| `04_kiyas/`     | **ANA FIRMWARE**: açılışta 4 tekniği kıyaslar (Düz/AES/ChaCha20/Ascon) + sonra canlı AES-GCM yayını | USB/seri | DHT (+ ascon.h, chacha20poly1305.h aynı klasörde) |
+| `05_seri/`      | DHT22 + AES-GCM, PC'ye gönderim (tek-teknik sade örnek) | USB/seri | DHT |
 | `06_kaydet_aktar/` | **Portatif prototip**: ağ yokken flash'a biriktir, bağlanınca aktar | Bluetooth | DHT |
 
-Önerilen sıra: `01` (kripto izole) → `02` (sensör) → `04` (kıyas = ana bulgu) →
-`05` (canlı izleme, USB) → `06` (kaydet-sonra-aktar prototip, Bluetooth) → `03` (WiFi, uzaktan).
+Sunum/demo: tek başına `04_kiyas` yeterli — açılışta kıyas, sonra canlı yayın birlikte.
+PC'de tek komut: `python alici.py --seri COMx` → `python pano.py` (kıyas panoya, canlı DB'ye).
+
+Öğrenme sırası: `01` (kripto izole) → `02` (sensör) → `04` (kıyas + canlı, ana firmware) →
+`05` (tek-teknik sade örnek) → `06` (kaydet-sonra-aktar prototip, Bluetooth) → `03` (WiFi, uzaktan).
 
 `06_kaydet_aktar` için: **Tools → Partition Scheme → "Huge APP"**
 (Bluetooth + LittleFS yer kaplar).

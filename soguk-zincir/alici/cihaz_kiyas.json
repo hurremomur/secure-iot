@@ -1,0 +1,26 @@
+[
+  {
+    "ad": "Düz Metin",
+    "aead": false,
+    "sure_us": 0.39,
+    "boyut": 38
+  },
+  {
+    "ad": "AES-128-GCM",
+    "aead": true,
+    "sure_us": 57.95,
+    "boyut": 54
+  },
+  {
+    "ad": "ChaCha20-Poly1305",
+    "aead": true,
+    "sure_us": 42.39,
+    "boyut": 54
+  },
+  {
+    "ad": "Ascon-128",
+    "aead": true,
+    "sure_us": 64.1,
+    "boyut": 54
+  }
+]

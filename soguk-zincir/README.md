@@ -118,15 +118,14 @@ soguk-zincir/
 │   ├── guvenlik_testi.py   # saldırı senaryoları (manipülasyon/replay)
 │   ├── cihaz_taklit.py     # ESP32 öykünücüsü (MQTT, donanımsız demo/test; --ecdh)
 │   ├── pano.py             # web panosu (canlı izleme + cihaz teknik kıyası grafiği)
-│   ├── kiyas_oku.py        # 04_kiyas'ın cihaz ölçümünü panoya aktarır
-│   ├── cihaz_kiyas.json    # cihazda ölçülen teknik kıyası (pano gösterir)
+│   ├── cihaz_kiyas.json    # cihazda ölçülen teknik kıyası (alici.py yazar, pano gösterir)
 │   └── gereksinimler.txt   # Python bağımlılıkları
 ├── cihaz/                  # ESP32 tarafı (C / Arduino)
 │   ├── 01_aes_olcum/       # cihazda AES ölçümü (sahte veri, sensörsüz test)
 │   ├── 02_dht_aes/         # gerçek DHT22 verisi + AES + soğuk zincir uyarısı (seri)
 │   ├── 03_mqtt/            # DHT22 + AES-GCM + WiFi/MQTT yayını
-│   ├── 04_kiyas/           # TEKNİK KIYASI: 4 teknik cihazda (ascon.h + chacha20poly1305.h)
-│   ├── 05_seri/            # DHT22 + AES-GCM, USB/seri ile gönderim (WiFi'siz)
+│   ├── 04_kiyas/           # ANA FIRMWARE: açılışta 4 teknik kıyası + canlı AES-GCM yayını (ascon.h + chacha20poly1305.h)
+│   ├── 05_seri/            # DHT22 + AES-GCM, USB/seri ile gönderim — tek-teknik sade örnek (WiFi'siz)
 │   └── 06_kaydet_aktar/    # PORTATİF PROTOTİP: Bluetooth + kaydet-sonra-aktar (flash tampon)
 ├── belgeler/
 │   └── protokol.md         # paket formatı, güvenlik kuralları, taşıma katmanları
@@ -166,6 +165,23 @@ python pano.py      # sonra panoyu başlat -> http://localhost:8000
 `pano.py`, `alici.py`'nin yazdığı `soguk_zincir.db`'yi okuyup güncel sıcaklığı,
 soğuk zincir durumunu, sıcaklık-zaman grafiğini, son olayları ve (varsa)
 teknik karşılaştırmasını her 2 saniyede bir canlı gösterir. Ek kütüphane gerekmez.
+
+### Cihazla sunum — tek kart, tek komut
+
+Demo için tek firmware (`04_kiyas`) yeterli: açılışta 4 tekniği kıyaslar, sonra
+canlı şifreli sıcaklığı akıtır. PC tarafında tek `alici.py` bu akıştan **hem**
+kıyası panoya (`cihaz_kiyas.json`) **hem** canlı veriyi DB'ye yazar.
+
+```bash
+# 1) 04_kiyas firmware'ini ESP32'ye yükle, Arduino Serial Monitor'i KAPAT (port cakismasin)
+cd alici
+python alici.py --seri COM5     # tek akis: KIYAS: -> pano, PKT: -> DB
+python pano.py                  # http://localhost:8000
+```
+
+Panoda aynı anda: üstte canlı sıcaklık grafiği + durum/olay panelleri, altta
+"ESP32 — TEKNİK KIYASI" çubuk grafiği. İkisi de tek karttan, tek komuttan gelir.
+(`COM5` yerine kendi portun; pyserial gerekir.)
 
 ### MQTT ile uçtan uca (WiFi — gerçek IoT akışı)
 
@@ -236,12 +252,13 @@ mbedTLS, ESP32 çekirdeğinde hazır gelir; sensörlü firmware'ler için "DHT s
 | `01_aes_olcum` | Kriptoyu izole test (sahte veri, sensörsüz) | — |
 | `02_dht_aes` | Gerçek DHT22 + AES-GCM + soğuk zincir uyarısı | Seri (ekran) |
 | `03_mqtt` | DHT22 + AES-GCM, brokere yayın | WiFi/MQTT |
-| `04_kiyas` | **4 tekniği cihazda kıyaslar** (süre/boyut) | Seri (ekran) |
-| `05_seri` | DHT22 + AES-GCM, PC'ye gönderim | USB/seri |
+| `04_kiyas` | **ANA FIRMWARE**: açılışta 4 tekniği kıyaslar + sonra canlı AES-GCM yayını | USB/seri |
+| `05_seri` | DHT22 + AES-GCM, PC'ye gönderim (tek-teknik sade örnek) | USB/seri |
 | `06_kaydet_aktar` | **Portatif prototip**: bağlantı yokken flash'a biriktirir, bağlanınca aktarır | Bluetooth |
 
-Önerilen sıra: `01` (kripto) → `02` (sensör) → `04` (kıyas) → `05` (canlı izleme, USB) →
-`06` (kaydet-sonra-aktar prototip, Bluetooth) → `03` (WiFi, uzaktan).
+Sunum/demo: tek başına **`04_kiyas`** yeterli (kıyas + canlı yayın birlikte).
+Öğrenme sırası: `01` (kripto) → `02` (sensör) → `04` (kıyas + canlı, ana firmware) →
+`05` (tek-teknik sade örnek) → `06` (kaydet-sonra-aktar prototip, Bluetooth) → `03` (WiFi, uzaktan).
 
 `04_kiyas` klasöründe `ascon.h` ve `chacha20poly1305.h` dosyaları `.ino` ile **aynı klasörde**
 olmalı (bu iki tekniği mbedTLS vermediğinden kendimiz yazdık; Python referansıyla doğrulandı).
@@ -271,36 +288,62 @@ başlarındaki açıklamalarda.
 
 ---
 
-## 9. Teknik karşılaştırması — metodoloji ve beklenen sonuç
+## 9. Bulgu — teknik karşılaştırması (ESP32'de ölçülen)
 
-Karşılaştırma ESP32 üzerinde, gerçek sensör paketiyle yapılır (`04_kiyas`). Her teknik
-için şifreleme süresi (µs) ve çıktı boyutu ölçülür.
+Karşılaştırma gerçek ESP32-WROOM-32D üzerinde, gerçek DHT22 paketiyle yapıldı (`04_kiyas`).
+Her teknik 500 kez çalıştırılıp ortalaması alındı; ölçümler **tekrarlanabilir** çıktı
+(onlarca döngüde ±%1 içinde).
 
-**Ölçüm metodolojisi (literatür-standardı):** Şifreleme süresi, **anahtar bir kez
-kurulduktan sonra** bir mesajı şifreleme maliyetidir. AES-GCM'de anahtar kurulumu
-(`setkey`, GHASH tablolarının hesabı) pahalı ama **tek seferliktir**; gerçek kullanımda
-anahtar (sabit ya da ECDH oturum anahtarı) bir kez kurulur, her mesajda değil. Bu yüzden
-kurulum döngü dışında yapılır ve ayrıca raporlanır. (Anahtarı her mesajda yeniden kurmak
-AES-GCM'i yapay olarak yavaş gösterir — ilk ölçümlerimizdeki sapmanın nedeni buydu.)
+**Metodoloji (literatür-standardı):** Süre, **anahtar bir kez kurulduktan sonra** bir
+mesajı şifreleme maliyetidir (gerçek kullanımda anahtar bir kez kurulur — sabit ya da ECDH
+oturum anahtarı). AES-GCM'in tek seferlik `setkey` maliyeti (~7 µs) ayrıca ölçüldü.
 
-**Beklenen sonuç ve literatürle örtüşme:**
-- **AES-128-GCM:** ESP32'nin donanım AES motoru sayesinde blok şifreleme hızlıdır;
-  anahtar amortize edildiğinde küçük pakette rekabetçi/öndedir (donanımlı AES literatürü).
-- **ChaCha20-Poly1305:** yazılımda verimlidir; donanım AES'i olmayan senaryolarda güçlüdür.
-- **Ascon-128:** NIST hafif kripto standardı; özellikle **düşük bellek/kod boyutu ve
-  enerji** açısından öne çıkar (hocanın makalelerindeki vurgu) — avantajı yalnız hız değil.
+**(a) Hız — gerçek paket (~39 bayt):**
 
-Boyut açısından tüm AEAD teknikleri eşittir: veri + 16 bayt doğrulama etiketi.
+| Teknik | AEAD | Süre | Boyut |
+|--------|:---:|:---:|:---:|
+| Düz Metin | Hayır | 0,41 µs | 39 B |
+| ChaCha20-Poly1305 | Evet | **42,4 µs** | 55 B |
+| AES-128-GCM | Evet | 58,0 µs (+7 µs setkey) | 55 B |
+| Ascon-128 | Evet | 64,3 µs | 55 B |
 
-**Rapora eklenecek güçlendirmeler (bilimsellik):**
-1. Anahtar amortize edilmiş ölçüm (yapıldı) + tek seferlik `setkey` maliyeti ayrıca.
-2. Farklı veri boyutları (küçük paket vs büyük yük) — büyük yükte donanım AES'in verimi artar.
-3. Donanım AES hızlandırmasının mbedTLS'te etkin olduğunun doğrulanması.
-4. Bellek/kod boyutu karşılaştırması (Ascon'un asıl avantajı).
+**(b) Hız — farklı veri boyutları (µs):**
 
-> Not: Sayısal tablo, düzeltilmiş `04_kiyas` cihazda çalıştırılıp `kiyas_oku.py` ile
-> alındığında bu bölüme ve panoya işlenecektir. Metodoloji literatürle hizalı olduğundan
-> sonucun da literatürle örtüşmesi beklenir.
+| Boyut | ChaCha20 | AES-GCM | Ascon-128 |
+|-------|:---:|:---:|:---:|
+| 64 B | **46** | 68 | 90 |
+| 256 B | **122** | 174 | 257 |
+| 1024 B | **424** | 597 | 925 |
+
+ChaCha20 **her boyutta** en hızlı; sıralama değişmiyor (AES büyük yükte de öne geçmedi).
+
+**(c) Bellek — bağlam/durum boyutu (RAM):**
+
+| Teknik | Durum/bağlam | Not |
+|--------|:---:|-----|
+| Düz Metin | 0 B | — |
+| Ascon-128 | **40 B** | tablo yok |
+| ChaCha20-Poly1305 | 64 B (+Poly1305) | tablo yok |
+| AES-128-GCM | **392 B** | GHASH tabloları |
+
+Ascon, AES-GCM'den ~**10 kat az** RAM kullanıyor.
+
+**Yorum (mekanizma, literatürle tutarlı):**
+- **ChaCha20-Poly1305 en hızlı:** ARX tabanlı, 32-bit işlemcide (ESP32) yazılımda çok
+  verimli; Poly1305 MAC hızlı.
+- **AES-GCM donanıma rağmen geride:** ESP32 AES bloğunu hızlandırır, ama mbedTLS'in GCM'i
+  AES'i blok-blok çağırır ve kimlik doğrulaması (**GHASH yazılımda**) darboğaz olur; donanım
+  AES'in toplu avantajı GCM'de erimez (GCM-on-MCU literatürü).
+- **Ascon-128 hızda en yavaş ama bellekte/kodda/enerjide en hafif:** asıl avantajı budur;
+  kaynak-kısıtlı/enerji-duyarlı senaryolar için tasarlanmıştır (NIST hafif kripto).
+- **Enerji:** aktif CPU'da güç ~sabit olduğundan enerji ≈ süre (vekil); ChaCha20 en düşük
+  enerji/işlem. Gerçek ölçüm için besleme hattına INA219 akım sensörü eklenebilir (donanım adımı).
+
+**Sonuç:** Kaynağı kısıtlı cihazda **tek bir "en iyi" teknik yoktur; seçim metriğe bağlıdır:**
+ham hız → **ChaCha20-Poly1305**; bellek/kod/enerji ayak izi → **Ascon-128**; yaygın
+uyumluluk/standart → **AES-128-GCM** (ancak GCM ek yükü küçük MCU'da hissedilir). Bu çok-metrikli
+sonuç, literatürdeki "GCM/GHASH darboğazı", "ChaCha20 yazılım verimliliği" ve "Ascon'un düşük
+kaynak ayak izi" bulgularıyla örtüşür.
 
 ---
 

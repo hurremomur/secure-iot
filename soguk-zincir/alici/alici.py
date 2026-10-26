@@ -26,6 +26,7 @@ veri][tag]) — broker bile veriyi göremez (uçtan uca).
 
 import os
 import sys
+import json
 import time
 import sqlite3
 
@@ -38,6 +39,11 @@ SECILEN_TEKNIK = "AES-128-GCM"
 ANAHTAR = bytes.fromhex("00112233445566778899aabbccddeeff")
 ILISKILI = b"cihaz-01"
 VERITABANI = "soguk_zincir.db"
+
+# Cihazın açılışta yayınladığı "KIYAS:[...]" satırı buraya yazılır; pano.py okur.
+KIYAS_CIKTI = "cihaz_kiyas.json"
+# Cihazdaki ASCII adları panoda düzgün Türkçe göster
+KIYAS_AD_DUZELT = {"Duz Metin": "Düz Metin"}
 
 # MQTT ayarları (cihazla aynı broker/konu olmalı)
 # Demo için halka açık broker (kurulum gerektirmez). Yerel kullanım için
@@ -125,6 +131,21 @@ def simulasyon(db, teknik):
     if blob:
         blob[len(blob)//2] ^= 0x01
     paket_isle(db, teknik, nonce, bytes(blob), gorulen)
+
+
+def kiyas_yaz(satir):
+    """Cihazdan gelen 'KIYAS:[...]' satırını cihaz_kiyas.json'a yaz (pano çubuk grafiği)."""
+    try:
+        veri = json.loads(satir[len("KIYAS:"):])
+    except json.JSONDecodeError:
+        return
+    for r in veri:
+        r["ad"] = KIYAS_AD_DUZELT.get(r.get("ad", ""), r.get("ad", ""))
+    with open(KIYAS_CIKTI, "w", encoding="utf-8") as f:
+        json.dump(veri, f, ensure_ascii=False, indent=2)
+    en_hizli = min((r for r in veri if r.get("aead")), key=lambda r: r["sure_us"], default=None)
+    ek = f" (en hızlı AEAD: {en_hizli['ad']})" if en_hizli else ""
+    print(f"  [KIYAS] cihaz teknik kıyası panoya yazıldı -> {KIYAS_CIKTI}{ek}")
 
 
 def wire_ayikla(teknik, payload):
@@ -229,13 +250,16 @@ def seri_dinle(db, teknik, port, baud=115200):
         return
 
     print(f"SERİ mod: {port} @ {baud} dinleniyor... (Ctrl+C ile çık)")
-    print("Cihazdan paket bekleniyor (PKT: satırları)...\n")
+    print("Canlı paket (PKT:) -> DB; açılış kıyası (KIYAS:) -> pano. İkisi de bu akıştan.\n")
     gorulen = set()
     try:
         while True:
             try:
                 satir = ser.readline().decode("ascii", errors="ignore").strip()
             except Exception:
+                continue
+            if satir.startswith("KIYAS:"):
+                kiyas_yaz(satir)   # cihazın açılış kıyası -> panoya
                 continue
             if not satir.startswith("PKT:"):
                 continue   # cihazın diğer (debug) satırlarını yok say

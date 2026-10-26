@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERITABANI = "soguk_zincir.db"      # alici.py ile aynı dosya
 BENCHMARK = "benchmark_sonuc.json"  # benchmark.py üretir (PC referansı)
-CIHAZ_KIYAS = "cihaz_kiyas.json"    # 04_kiyas'tan kiyas_oku.py ile alınan CİHAZ ölçümü
+CIHAZ_KIYAS = "cihaz_kiyas.json"    # 04_kiyas'ın açılış kıyası (alici.py --seri yazar)
 PORT = 8000
 
 # Soğuk zincir güvenli aralığı (paket.py ile aynı olmalı)
@@ -262,7 +262,7 @@ SAYFA = r"""<!doctype html>
     <div class="kart">
       <p class="baslik">ESP32 — Teknik Kıyası (şifreleme süresi)</p>
       <div id="kiyas"><div class="bos">Cihaz kıyası yok.<br>
-        <span style="font-size:12px">04_kiyas yükle → python kiyas_oku.py COM5</span></div></div>
+        <span style="font-size:12px">04_kiyas yükle → python alici.py --seri COM5</span></div></div>
     </div>
   </div>
 </div>
